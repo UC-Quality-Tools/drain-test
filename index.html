@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Battery drain test</title>
+<style>
+:root{--bg:#0a0c0f;--panel:#14181d;--line:#262c34;--fg:#e6e8eb;--mut:#8a919a;--acc:#8ecbff;--warn:#ffb454;--bad:#ff7a7a;--ok:#7fd8a6}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:18px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:720px;margin:0 auto;padding:20px 18px 40px}
+h1{font-size:1.25rem;margin:0 0 16px;font-weight:600}
+h2{font-size:1rem;margin:22px 0 8px;font-weight:600;color:var(--mut)}
+section[hidden]{display:none}
+label{display:block;margin:12px 0 4px;color:var(--mut);font-size:.9rem}
+input[type=text],input[type=number]{width:100%;padding:12px;font:inherit;color:var(--fg);background:var(--panel);border:1px solid var(--line);border-radius:6px}
+input:focus,button:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.row{display:flex;gap:12px}.row>div{flex:1}
+.chk{display:flex;gap:12px;align-items:flex-start;margin:12px 0;color:var(--fg);font-size:1rem}
+.chk input{width:24px;height:24px;margin-top:2px;flex:none}
+button{font:inherit;padding:14px 20px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--fg);cursor:pointer}
+button.main{background:var(--acc);color:#06121c;border-color:var(--acc);font-weight:600;width:100%;margin-top:16px}
+button:disabled{opacity:.4;cursor:not-allowed}
+.msg{padding:10px 12px;border-radius:6px;margin:12px 0;background:var(--panel);border-left:4px solid var(--mut);font-size:.95rem}
+.msg.warn{border-color:var(--warn)}.msg.bad{border-color:var(--bad)}.msg.ok{border-color:var(--ok)}
+.big{font-size:4.2rem;font-weight:700;line-height:1.1;margin:6px 0}
+.mut{color:var(--mut)}
+table{width:100%;border-collapse:collapse;margin:6px 0}
+th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+th{color:var(--mut);font-weight:500;font-size:.9rem}
+#qr{background:#fff;padding:14px;border-radius:6px;width:min(320px,100%);margin:8px 0}
+#qr svg,#qr img{width:100%;height:auto;display:block}
+textarea{width:100%;height:90px;background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:10px;font:14px/1.4 ui-monospace,monospace}
+.btns{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px}.btns button{flex:1;min-width:180px}
+</style>
+</head>
+<body>
+<main>
+
+<!-- SETUP -->
+<section id="setup">
+  <h1>Battery drain test</h1>
+  <div class="row">
+    <div><label for="po">PO number</label><input id="po" type="text" autocomplete="off" autocapitalize="characters"></div>
+    <div><label for="unit">Tablet no. in series</label><input id="unit" type="number" min="1" inputmode="numeric"></div>
+  </div>
+  <label class="chk"><input id="c_air" type="checkbox"><span>Airplane mode is on</span></label>
+  <label class="chk"><input id="c_sav" type="checkbox"><span>Battery saver is off, brightness set, charger unplugged</span></label>
+  <div id="setupMsg"></div>
+  <button id="start" class="main" disabled>Start 3-hour test</button>
+</section>
+
+<!-- RUNNING -->
+<section id="running" hidden>
+  <h1 id="runTitle"></h1>
+  <div class="mut">Time left</div>
+  <div class="big" id="left">3:00:00</div>
+  <div class="mut">Battery now</div>
+  <div class="big" id="now">--%</div>
+  <div id="runMsg"></div>
+  <h2>Readings</h2>
+  <table><thead><tr><th>Min</th><th>Time</th><th>Battery</th></tr></thead><tbody id="runRows"></tbody></table>
+  <p class="mut">Keep this tab open and in front. Don't close it.</p>
+</section>
+
+<!-- DONE -->
+<section id="done" hidden>
+  <h1 id="doneTitle"></h1>
+  <div id="alarmBox" class="msg warn">Test finished. <button id="stopAlarm" style="margin-left:12px">Stop alarm</button></div>
+  <table><thead><tr><th>Min</th><th>Time</th><th>Battery</th><th>Charging</th></tr></thead><tbody id="doneRows"></tbody></table>
+  <div id="doneFlags"></div>
+  <h2>Send the results</h2>
+  <p class="mut" style="margin-top:0">Turn airplane mode off first. The form opens with the results filled in: check them and tap Submit. No connection: scan the QR code instead.</p>
+  <div class="btns"><button id="send" class="main" style="margin:0">Open results form</button></div>
+  <div id="sendMsg"></div>
+  <h2>Backup: QR code</h2>
+  <div id="qr"></div>
+  <textarea id="payload" readonly></textarea>
+  <div class="btns"><button id="wipe">Wipe this test and start next tablet</button></div>
+</section>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<script>
+/* ---------- config ---------- */
+const CFG = {
+  // Prefilled Microsoft Forms link. Field order: PO, Tablet, Readings, Notes.
+  FORM_BASE: "https://forms.cloud.microsoft/Pages/ResponsePage.aspx?id=PzIvplI7ZkepfXH4tVZsXahUuQaiMWVIg-D9ds-JwgVUMFNVWFQzOU9YRTVLNDMwMllBSkU4Q0tGQi4u",
+  FIELDS: {
+    po:       "r3fb8b9c05de2449f83c1d6c7fcab8132",
+    unit:     "r34218f1099b04e609d88a20509b44e8b",
+    readings: "r9cc5a71778cf48ae8d7dc2a3f377e1d1",
+    notes:    "r389a2e3a8fdb44f484fa701383499650"
+  },
+  SAMPLES: 7,            // readings: 0, 30, ... 180 min
+  INTERVAL_MIN: 30
+};
+const params = new URLSearchParams(location.search);
+const FAST = params.has("fast");                       // ?fast=1 -> 30 s interval, 3 min test, for trying it out
+const IV = (FAST ? 0.5 : CFG.INTERVAL_MIN) * 60000;
+
+const $ = id => document.getElementById(id);
+let S = null, bat = null, wl = null, ticker = null, ac = null, alarm = null, lastTick = 0, resumedNote = false;
+
+/* ---------- storage (sessionStorage: survives reload, gone when the tab closes) ---------- */
+function save(){ try{ sessionStorage.setItem("drain", JSON.stringify(S)); }catch(e){} }
+function load(){ try{ return JSON.parse(sessionStorage.getItem("drain")); }catch(e){ return null; } }
+function wipeStore(){ try{ sessionStorage.removeItem("drain"); }catch(e){} }
+
+/* ---------- helpers ---------- */
+const pad = n => String(n).padStart(2,"0");
+const clock = t => { const d = new Date(t); return pad(d.getHours())+":"+pad(d.getMinutes()); };
+const hms = ms => { ms = Math.max(0,Math.round(ms/1000)); return Math.floor(ms/3600)+":"+pad(Math.floor(ms%3600/60))+":"+pad(ms%60); };
+const pct = () => Math.round(bat.level*100);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function msg(el, text, kind){ el.innerHTML = text ? '<div class="msg '+(kind||"")+'">'+text+'</div>' : ""; }
+function ev(text){ S.events.push({t:Date.now(), text}); save(); }
+function show(id){ ["setup","running","done"].forEach(s => $(s).hidden = s !== id); }
+
+/* ---------- setup screen ---------- */
+function checkSetup(){
+  const ok = $("po").value.trim() && $("unit").value && $("c_air").checked && $("c_sav").checked && bat;
+  $("start").disabled = !ok;
+}
+["po","unit","c_air","c_sav"].forEach(id => $(id).addEventListener("input", checkSetup));
+
+async function init(){
+  if (!navigator.getBattery){
+    show("setup");
+    msg($("setupMsg"), "This browser has no Battery API. Open the page in Chrome on Android.", "bad");
+    return;
+  }
+  bat = await navigator.getBattery();
+  bat.addEventListener("chargingchange", () => { if (S && !S.done) ev("charging=" + bat.charging); updateRun(); });
+  S = load();
+  if (S && S.done){ renderDone(false); return; }
+  if (S){ resume(); return; }
+  $("po").value = params.get("po") || "";
+  $("unit").value = params.get("unit") || "";
+  show("setup"); checkSetup();
+  if (!("wakeLock" in navigator)) msg($("setupMsg"), "Wake lock not supported here. The screen may turn off during the test.", "warn");
+}
+
+$("start").addEventListener("click", () => {
+  try { ac = new (window.AudioContext||window.webkitAudioContext)(); } catch(e){}
+  S = { po:$("po").value.trim(), unit:$("unit").value, start:Date.now(), samples:[], events:[], done:false, exported:false };
+  sample(0); save(); run();
+});
+
+/* ---------- running ---------- */
+async function lock(){
+  if (!("wakeLock" in navigator)) return;
+  try{
+    wl = await navigator.wakeLock.request("screen");
+    wl.addEventListener("release", () => { wl = null; if (S && !S.done) ev("wake lock lost"); updateRun(); });
+  }catch(e){ ev("wake lock denied"); }
+  updateRun();
+}
+document.addEventListener("visibilitychange", () => {
+  if (!S || S.done) return;
+  if (document.visibilityState === "hidden") ev("page hidden");
+  else { ev("page visible"); lock(); }
+});
+document.addEventListener("pointerdown", () => { resumedNote = false; if (ac && ac.state === "suspended") ac.resume(); if (!ac && S && !S.done){ try{ ac = new AudioContext(); }catch(e){} } });
+
+function sample(m){
+  S.samples.push({ m, t:Date.now(), lvl:pct(), chg:bat.charging });
+  save();
+}
+function run(){
+  show("running");
+  $("runTitle").textContent = "PO " + S.po + ", tablet " + S.unit;
+  lastTick = Date.now();
+  lock();
+  clearInterval(ticker); ticker = setInterval(tick, 1000);
+  renderRows(); tick();
+}
+function resume(){
+  ev("page reloaded");
+  resumedNote = true;
+  run();
+}
+function tick(){
+  const now = Date.now();
+  if (now - lastTick > 5000) ev("timer gap " + Math.round((now-lastTick)/1000) + " s");
+  lastTick = now;
+  while (!S.done && S.samples.length < CFG.SAMPLES && now - S.start >= S.samples.length * IV){
+    const idx = S.samples.length;
+    if (now - S.start - idx*IV > 60000) ev("reading " + idx + " late");
+    sample(idx * CFG.INTERVAL_MIN); renderRows();
+  }
+  if (S.samples.length >= CFG.SAMPLES && now - S.start >= (CFG.SAMPLES-1) * IV) return finish();
+  const left = hms((CFG.SAMPLES-1)*IV - (now - S.start));
+  if ($("left").textContent !== left) $("left").textContent = left;
+  updateRun();
+}
+function updateRun(){
+  if (!S || S.done) return;
+  const n = pct() + "%";
+  if ($("now").textContent !== n) $("now").textContent = n;
+  const w = [];
+  if (bat.charging) w.push(['bad', "Tablet is charging. This test is invalid."]);
+  if (!wl && "wakeLock" in navigator) w.push(['warn', "Screen lock not active. Keep the tab in front."]);
+  if (resumedNote) w.push(['warn', "Test resumed after a reload. Tap the screen once to arm the end alarm."]);
+  const html = w.map(x => '<div class="msg '+x[0]+'">'+x[1]+'</div>').join("");
+  if ($("runMsg").innerHTML !== html) $("runMsg").innerHTML = html;
+}
+function renderRows(){
+  $("runRows").innerHTML = S.samples.map(s => "<tr><td>"+s.m+"</td><td>"+clock(s.t)+"</td><td>"+s.lvl+"%</td></tr>").join("");
+}
+
+/* ---------- finish ---------- */
+function finish(){
+  clearInterval(ticker); S.done = true; save();
+  if (wl) wl.release().catch(()=>{});
+  renderDone(true);
+}
+function beep(){
+  if (ac){ try{
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.frequency.value = 880; g.gain.value = 0.3; o.connect(g); g.connect(ac.destination);
+    o.start(); o.stop(ac.currentTime + 0.4);
+  }catch(e){} }
+  if (navigator.vibrate) navigator.vibrate([300,150,300]);
+}
+function flags(){
+  const f = [];
+  if (S.samples.some(s => s.chg)) f.push("charging");
+  const n = k => S.events.filter(e => e.text.indexOf(k) === 0).length;
+  if (n("timer gap")) f.push(n("timer gap") + " timer gaps");
+  if (n("wake lock")) f.push(n("wake lock") + " wake lock losses");
+  if (n("page hidden")) f.push(n("page hidden") + " times hidden");
+  if (n("page reloaded")) f.push("reloaded");
+  return f;
+}
+function payloadText(){
+  const f = flags();
+  return ["DRAIN", S.po, S.unit, new Date(S.start).toISOString(), S.samples.map(s => s.lvl).join(","), f.length ? f.join("|") : "OK"].join(";");
+}
+function renderDone(playAlarm){
+  show("done");
+  $("doneTitle").textContent = "PO " + S.po + ", tablet " + S.unit;
+  $("doneRows").innerHTML = S.samples.map(s => "<tr><td>"+s.m+"</td><td>"+clock(s.t)+"</td><td>"+s.lvl+"%</td><td>"+(s.chg?"yes":"no")+"</td></tr>").join("");
+  const f = flags();
+  $("doneFlags").innerHTML = f.length ? '<div class="msg warn">Check: ' + esc(f.join(", ")) + '</div>' : '<div class="msg ok">No issues logged.</div>';
+  const text = payloadText();
+  $("payload").value = text;
+  try{
+    const q = qrcode(0, "M"); q.addData(text); q.make();
+    $("qr").innerHTML = q.createSvgTag({cellSize:4, margin:0, scalable:true});
+  }catch(e){ $("qr").innerHTML = '<p style="color:#000">QR library not loaded. Use the text below.</p>'; }
+  $("alarmBox").hidden = !playAlarm;
+  if (playAlarm){ beep(); alarm = setInterval(beep, 1500); }
+}
+$("stopAlarm").addEventListener("click", () => { clearInterval(alarm); $("alarmBox").hidden = true; });
+
+/* ---------- send / wipe ---------- */
+function formUrl(){
+  const f = flags();
+  const v = { po:S.po, unit:S.unit, readings:S.samples.map(x => x.lvl).join(","), notes:f.length ? f.join(", ") : "OK" };
+  let u = CFG.FORM_BASE;
+  for (const k in CFG.FIELDS) u += "&" + CFG.FIELDS[k] + "=" + encodeURIComponent(v[k]);
+  return u;
+}
+$("send").addEventListener("click", () => {
+  window.open(formUrl(), "_blank");
+  msg($("sendMsg"), "Form opened in a new tab. Check the values, tap Submit, then come back here and wipe.", "ok");
+});
+$("wipe").addEventListener("click", () => {
+  if (!confirm("Did you submit the form (or scan the QR code)? Wiping deletes the results from this tablet.")) return;
+  const po = S.po, unit = (parseInt(S.unit,10)||0) + 1;
+  clearInterval(alarm); wipeStore(); S = null;
+  $("po").value = po; $("unit").value = unit; $("c_air").checked = false; $("c_sav").checked = false;
+  msg($("sendMsg"), ""); show("setup"); checkSetup();
+});
+
+init();
+</script>
+</body>
+</html>
