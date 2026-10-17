@@ -13,7 +13,7 @@ h1{font-size:1.25rem;margin:0 0 16px;font-weight:600}
 h2{font-size:1rem;margin:22px 0 8px;font-weight:600;color:var(--mut)}
 section[hidden]{display:none}
 label{display:block;margin:12px 0 4px;color:var(--mut);font-size:.9rem}
-input[type=text],input[type=number]{width:100%;padding:12px;font:inherit;color:var(--fg);background:var(--panel);border:1px solid var(--line);border-radius:6px}
+input[type=text],input[type=number],select{width:100%;padding:12px;font:inherit;color:var(--fg);background:var(--panel);border:1px solid var(--line);border-radius:6px}
 input:focus,button:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 .row{display:flex;gap:12px}.row>div{flex:1}
 .chk{display:flex;gap:12px;align-items:flex-start;margin:12px 0;color:var(--fg);font-size:1rem}
@@ -44,6 +44,7 @@ textarea{width:100%;height:90px;background:var(--panel);color:var(--fg);border:1
     <div><label for="po">PO number</label><input id="po" type="text" autocomplete="off" autocapitalize="characters"></div>
     <div><label for="unit">Tablet no. in series</label><input id="unit" type="number" min="1" inputmode="numeric"></div>
   </div>
+  <label for="type">Tablet type / size</label><select id="type"><option value="">Choose…</option><option value="8 in">8"</option><option value="10 in">10"</option></select>
   <label class="chk"><input id="c_air" type="checkbox"><span>Airplane mode is on</span></label>
   <label class="chk"><input id="c_sav" type="checkbox"><span>Battery saver is off, brightness set, charger unplugged</span></label>
   <div id="setupMsg"></div>
@@ -85,10 +86,11 @@ textarea{width:100%;height:90px;background:var(--panel);color:var(--fg);border:1
 <script>
 /* ---------- config ---------- */
 const CFG = {
-  // Prefilled Microsoft Forms link. Field order: PO, Tablet, Readings, Notes.
+  // Prefilled Microsoft Forms link. Fields: PO, Type, Tablet, Readings, Notes.
   FORM_BASE: "https://forms.cloud.microsoft/Pages/ResponsePage.aspx?id=PzIvplI7ZkepfXH4tVZsXahUuQaiMWVIg-D9ds-JwgVUMFNVWFQzOU9YRTVLNDMwMllBSkU4Q0tGQi4u",
   FIELDS: {
     po:       "r3fb8b9c05de2449f83c1d6c7fcab8132",
+    type:     "r4099145e70334833b3b7ec146114c46a",
     unit:     "r34218f1099b04e609d88a20509b44e8b",
     readings: "r9cc5a71778cf48ae8d7dc2a3f377e1d1",
     notes:    "r389a2e3a8fdb44f484fa701383499650"
@@ -120,10 +122,11 @@ function show(id){ ["setup","running","done"].forEach(s => $(s).hidden = s !== i
 
 /* ---------- setup screen ---------- */
 function checkSetup(){
-  const ok = $("po").value.trim() && $("unit").value && $("c_air").checked && $("c_sav").checked && bat;
+  const ok = $("po").value.trim() && $("unit").value && $("type").value.trim() && $("c_air").checked && $("c_sav").checked && bat;
   $("start").disabled = !ok;
 }
-["po","unit","c_air","c_sav"].forEach(id => $(id).addEventListener("input", checkSetup));
+["po","unit","type","c_air","c_sav"].forEach(id => $(id).addEventListener("input", checkSetup));
+$("type").addEventListener("change", checkSetup);
 
 async function init(){
   if (!navigator.getBattery){
@@ -138,13 +141,14 @@ async function init(){
   if (S){ resume(); return; }
   $("po").value = params.get("po") || "";
   $("unit").value = params.get("unit") || "";
+  { const t = parseInt(params.get("type"), 10); $("type").value = (t === 8 || t === 10) ? t + " in" : ""; }
   show("setup"); checkSetup();
   if (!("wakeLock" in navigator)) msg($("setupMsg"), "Wake lock not supported here. The screen may turn off during the test.", "warn");
 }
 
 $("start").addEventListener("click", () => {
   try { ac = new (window.AudioContext||window.webkitAudioContext)(); } catch(e){}
-  S = { po:$("po").value.trim(), unit:$("unit").value, start:Date.now(), samples:[], events:[], done:false, exported:false };
+  S = { po:$("po").value.trim(), unit:$("unit").value, type:$("type").value.trim(), start:Date.now(), samples:[], events:[], done:false, exported:false };
   sample(0); save(); run();
 });
 
@@ -170,7 +174,7 @@ function sample(m){
 }
 function run(){
   show("running");
-  $("runTitle").textContent = "PO " + S.po + ", tablet " + S.unit;
+  $("runTitle").textContent = "PO " + S.po + ", tablet " + S.unit + (S.type ? " (" + S.type + ")" : "");
   lastTick = Date.now();
   lock();
   clearInterval(ticker); ticker = setInterval(tick, 1000);
@@ -236,11 +240,11 @@ function flags(){
 }
 function payloadText(){
   const f = flags();
-  return ["DRAIN", S.po, S.unit, new Date(S.start).toISOString(), S.samples.map(s => s.lvl).join(","), f.length ? f.join("|") : "OK"].join(";");
+  return ["DRAIN", S.po, S.unit, (S.type||"").replace(/;/g,","), new Date(S.start).toISOString(), S.samples.map(s => s.lvl).join(","), f.length ? f.join("|") : "OK"].join(";");
 }
 function renderDone(playAlarm){
   show("done");
-  $("doneTitle").textContent = "PO " + S.po + ", tablet " + S.unit;
+  $("doneTitle").textContent = "PO " + S.po + ", tablet " + S.unit + (S.type ? " (" + S.type + ")" : "");
   $("doneRows").innerHTML = S.samples.map(s => "<tr><td>"+s.m+"</td><td>"+clock(s.t)+"</td><td>"+s.lvl+"%</td><td>"+(s.chg?"yes":"no")+"</td></tr>").join("");
   const f = flags();
   $("doneFlags").innerHTML = f.length ? '<div class="msg warn">Check: ' + esc(f.join(", ")) + '</div>' : '<div class="msg ok">No issues logged.</div>';
@@ -258,7 +262,7 @@ $("stopAlarm").addEventListener("click", () => { clearInterval(alarm); $("alarmB
 /* ---------- send / wipe ---------- */
 function formUrl(){
   const f = flags();
-  const v = { po:S.po, unit:S.unit, readings:S.samples.map(x => x.lvl).join(","), notes:f.length ? f.join(", ") : "OK" };
+  const v = { po:S.po, type:S.type||"", unit:S.unit, readings:S.samples.map(x => x.lvl).join(","), notes:f.length ? f.join(", ") : "OK" };
   let u = CFG.FORM_BASE;
   for (const k in CFG.FIELDS) u += "&" + CFG.FIELDS[k] + "=" + encodeURIComponent(v[k]);
   return u;
@@ -269,9 +273,9 @@ $("send").addEventListener("click", () => {
 });
 $("wipe").addEventListener("click", () => {
   if (!confirm("Did you submit the form (or scan the QR code)? Wiping deletes the results from this tablet.")) return;
-  const po = S.po, unit = (parseInt(S.unit,10)||0) + 1;
+  const po = S.po, type = S.type || "", unit = (parseInt(S.unit,10)||0) + 1;
   clearInterval(alarm); wipeStore(); S = null;
-  $("po").value = po; $("unit").value = unit; $("c_air").checked = false; $("c_sav").checked = false;
+  $("po").value = po; $("type").value = type; $("unit").value = unit; $("c_air").checked = false; $("c_sav").checked = false;
   msg($("sendMsg"), ""); show("setup"); checkSetup();
 });
 
